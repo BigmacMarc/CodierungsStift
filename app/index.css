@@ -58,11 +58,16 @@ body {
   height: 100%;
 }
 .splitter {
-  background: var(--border);
+  height: 6px;
   cursor: row-resize;
+  background: var(--border, #2b2f3a);
+  touch-action: none;    /* wichtig für Pointer Events (auch mobil) */
   user-select: none;
-  transition: background 0.15s ease;
 }
+.dragging {
+  cursor: row-resize !important;
+}
+
 .splitter:hover {
   background: var(--accent);
 }

@@ -27,7 +27,7 @@ self.MonacoEnvironment = {
   }
 };
 
-export function MonacoEditor({ file, onChange }: { file: EditorFile; onChange: (value: string) => void }) {
+export function MonacoEditor({ file, onChange }: { file: EditorFile; onChange: (value: string, meta?: { commitNow?: boolean }) => void }) {
   const divRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const modelRef = useRef<monaco.editor.ITextModel | null>(null);
@@ -50,9 +50,12 @@ export function MonacoEditor({ file, onChange }: { file: EditorFile; onChange: (
     });
     editorRef.current = editor;
 
-    const sub = editor.onDidChangeModelContent(() => {
-      onChange(editor.getValue());
+    const sub = editor.onDidChangeModelContent((e) => {
+    const value = editor.getValue();
+    const commitNow = e.changes?.some((c) => c.text.includes('>')) || false;
+    onChange(value, commitNow ? { commitNow: true } : undefined);
     });
+
 
     const onFormat = () => {
       editor.getAction('editor.action.formatDocument')?.run();

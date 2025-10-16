@@ -4,6 +4,18 @@ import { newBlankProject, newStarterProject, buildPreviewHtml, findActiveFile, a
 import { loadProject, saveProject, loadTheme, saveTheme, loadTopSplit, saveTopSplit } from '../lib/storage';
 import { MonacoEditor } from './MonacoEditor';
 
+function escapeStyle(s: string = '') {
+  return s.replace(/<\/style/gi, '<\\/style');
+}
+function escapeScript(s: string = '') {
+  return s.replace(/<\/script/gi, '<\\/script');
+}
+function makeSrcDoc(html: string, css: string, js: string) {
+  const safeHTML = html || '';
+  const safeCSS = escapeStyle(css || '');
+  const safeJS = escapeScript(js || '');
+  return `<!doctype html>\n<html>\n<head>\n  <meta charset="utf-8" />\n  <meta name="viewport" content="width=device-width, initial-scale=1" />\n  <style>${safeCSS}</style>\n  </head>\n<body>\n${safeHTML}\n<script>\n(() => {\n  const send = (type, args) => parent.postMessage({ __fromPreview: true, type, args }, '*');\n  window.addEventListener('error', (e) => {\n    send('error', [String(e.message || e.error || 'Error'), (e.error && e.error.stack) || '' ]);\n  });\n  window.addEventListener('unhandledrejection', (e) => {\n    send('error', ['Unhandled: ' + String(e.reason || 'Promise rejection')]);\n  });\n})();\n</script>\n<script>\ntry { (function(){\n${safeJS}\n//# sourceURL=mini-user.js\n})(); } catch (e) { console.error(e); }\n</script>\n</body>\n</html>`;
+}
 function useDebounced<T>(value: T, delay = 400): T {
   const [v, setV] = useState(value);
   useEffect(() => {
@@ -34,30 +46,41 @@ export function App() {
     saveProject({ ...debouncedProject, theme, topPanelHeight: topHeight });
   }, [debouncedProject, theme, topHeight]);
 
-  // Compose preview document
-  const previewHtml = useMemo(() => buildPreviewHtml(project), [project]);
-  const debouncedHtml = useDebounced(previewHtml, 400);
-  const activeFile = findActiveFile(project);
+// helper: stehen wir gerade in einem offenen <tag ... ?
+const isInsideTag = (s: string) => {
+  const lastLt = s.lastIndexOf('<');
+  const lastGt = s.lastIndexOf('>');
+  return lastLt > lastGt; // true = Tag noch offen
+};
 
-  // Only update live preview for HTML when the current tag is closed
-  const isInsideTag = (s: string) => {
-    const lastLt = s.lastIndexOf('<');
-    const lastGt = s.lastIndexOf('>');
-    return lastLt > lastGt;
-  };
-  const htmlUpdateBlocked = useMemo(() => {
-    if (!activeFile) return false;
-    if (activeFile.language !== 'html') return false;
-    return isInsideTag(activeFile.content);
-  }, [activeFile?.id, activeFile?.content, activeFile?.language]);
+// … innerhalb App()
+const previewHtml = useMemo(() => buildPreviewHtml(project), [project]);
+const debouncedHtml = useDebounced(previewHtml, 350); // 300–400ms ist sweet spot
+const activeFile = findActiveFile(project);
 
-  // Update iframe when content ready (no open tag)
-  useEffect(() => {
-    const iframe = iframeRef.current;
-    if (!iframe) return;
-    if (htmlUpdateBlocked) return;
+// HTML-Update nur, wenn kein offener Tag
+useEffect(() => {
+  const iframe = iframeRef.current;
+  if (!iframe) return;
+
+  const htmlFile = activeFile?.language === 'html' ? activeFile : undefined;
+  if (htmlFile && isInsideTag(htmlFile.content)) {
+    // block: wir bleiben beim letzten stabilen Stand
+    return;
+  }
+  const htmlFiles = project.files.filter((f) => f.language === 'html');
+  const entry = htmlFiles.find((f) => f.isEntry) || htmlFiles[0];
+  const htmlContent = entry?.content || '<div></div>';
+  const isFullDoc = /<html[\s>]/i.test(htmlContent);
+  if (isFullDoc) {
     iframe.srcdoc = debouncedHtml;
-  }, [debouncedHtml, htmlUpdateBlocked]);
+  } else {
+    const cssContent = project.files.filter((f) => f.language === 'css').map((f) => f.content).join('\n\n');
+    const jsContent = project.files.filter((f) => f.language === 'js').map((f) => f.content).join('\n\n');
+    iframe.srcdoc = makeSrcDoc(htmlContent, cssContent, jsContent);
+  }
+}, [debouncedHtml, activeFile?.id, activeFile?.content]);
+
 
   // Receive only error messages from preview
   useEffect(() => {
@@ -94,13 +117,24 @@ export function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  // Split drag
-  const onMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
-    e.preventDefault();
+  // Split dragging
+
+  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.currentTarget.setPointerCapture(e.pointerId);
     dragging.current = true;
+    document.body.classList.add('dragging');
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'row-resize';
   };
-  const onMouseUp = () => (dragging.current = false);
-  const onMouseMove = useCallback((e: MouseEvent) => {
+
+  const onPointerUp = (e: PointerEvent) => {
+    dragging.current = false;
+    document.body.classList.remove('dragging');
+    document.body.style.userSelect = '';
+    document.body.style.cursor = '';
+  };
+
+  const onPointerMove = useCallback((e: PointerEvent) => {
     if (!dragging.current) return;
     const root = document.querySelector('.main-split') as HTMLElement;
     if (!root) return;
@@ -110,18 +144,45 @@ export function App() {
     setTopHeight(ratio);
     saveTopSplit(ratio);
   }, []);
+
   useEffect(() => {
-    window.addEventListener('mousemove', onMouseMove);
-    window.addEventListener('mouseup', onMouseUp);
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerUp);
     return () => {
-      window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup', onMouseUp);
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
     };
-  }, [onMouseMove]);
+  }, [onPointerMove]);
+
 
   // Helpers to mutate project
   const setActiveFile = (id: string) => setProject((p) => setActive(p, id));
-  const onChangeContent = (id: string, content: string) => setProject((p) => updateContent(p, id, content));
+  const onChangeContent = (id: string, content: string, meta?: { commitNow?: boolean }) => {
+    setProject((prev) => {
+      const next = updateContent(prev, id, content);
+      if (meta?.commitNow) {
+        const f = next.files.find((x) => x.id === id);
+        if (f?.language === 'html' && !isInsideTag(f.content)) {
+          const iframe = iframeRef.current;
+          if (iframe) {
+            const htmlFiles = next.files.filter((x) => x.language === 'html');
+            const entry = htmlFiles.find((x) => x.isEntry) || htmlFiles[0];
+            const htmlContent = entry?.content || '<div></div>';
+            const isFullDoc = /<html[\s>]/i.test(htmlContent);
+            if (isFullDoc) {
+              iframe.srcdoc = buildPreviewHtml(next);
+            } else {
+              const cssContent = next.files.filter((x) => x.language === 'css').map((x) => x.content).join('\n\n');
+              const jsContent = next.files.filter((x) => x.language === 'js').map((x) => x.content).join('\n\n');
+              iframe.srcdoc = makeSrcDoc(htmlContent, cssContent, jsContent);
+            }
+          }
+        }
+      }
+      return next;
+    });
+  };
+
   const onAddFile = (lang: Language) => setProject((p) => addFile(p, lang));
   const onRemoveFile = (id: string) => setProject((p) => removeFile(p, id));
   const onRenameFile = (id: string) => {
@@ -240,13 +301,13 @@ export function App() {
                 <MonacoEditor
                   key={activeFile.id}
                   file={activeFile}
-                  onChange={(value) => onChangeContent(activeFile.id, value)}
+                  onChange={(value, meta) => onChangeContent(activeFile.id, value, meta)}
                 />
               )}
             </div>
           </div>
         </section>
-        <div className="splitter" onMouseDown={onMouseDown} aria-label="Griff zum Vergrößern/Verringern" role="separator" aria-orientation="horizontal" />
+        <div className="splitter" onPointerDown={onPointerDown} role="separator" aria-orientation="horizontal" />
         <section className="panel preview-wrap" aria-label="Vorschau unten">
           <div className="preview" style={{ position: 'relative' }}>
             <div className={"error-overlay" + (errorOverlay ? '' : ' overlay-hidden')} role="alert" aria-live="assertive">
@@ -301,4 +362,3 @@ function FileItem({ f, activeId, setActive, onRemove, onRename, onMakeEntry }: {
     </div>
   );
 }
-
