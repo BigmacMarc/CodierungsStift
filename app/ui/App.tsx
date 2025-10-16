@@ -240,6 +240,13 @@ useEffect(() => {
     return () => iframe.removeEventListener('load', onLoad);
   }, []);
 
+  // in App(), oberhalb des return und oberhalb des Tabs-Renderings
+const closeTab = React.useCallback((id: string) => {
+  // nutzt deine bestehende removeFile-Logik aus ../lib/project
+  setProject((p) => removeFile(p, id))
+}, [])
+
+
   return (
     <div className="app-shell" aria-label="Local CodePen IDE">
       <div className="toolbar" role="toolbar" aria-label="Hauptwerkzeuge">
@@ -283,19 +290,30 @@ useEffect(() => {
             </Section>
           </aside>
           <div className="editor-area">
+            
             <div className="tabs" role="tablist" aria-label="Datei-Tabs">
               {tabs.map((t) => (
                 <div
                   key={t.id}
                   role="tab"
-                  className={"tab" + (t.id === project.activeFileId ? ' active' : '')}
+                  className={'tab' + (t.id === project.activeFileId ? ' active' : '')}
                   aria-selected={t.id === project.activeFileId}
                   onClick={() => setActiveFile(t.id)}
+                  title={t.name}
                 >
-                  {t.name}
+                  <span className="tab-name">{t.name}</span>
+                  <button
+                    className="tab-close"
+                    aria-label={`${t.name} schließen`}
+                    title="Tab schließen"
+                    onClick={(e) => { e.stopPropagation(); closeTab(t.id) }}
+                  >
+                    ×
+                  </button>
                 </div>
               ))}
             </div>
+
             <div className="editor-container">
               {activeFile && (
                 <MonacoEditor
