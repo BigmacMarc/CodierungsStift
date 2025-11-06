@@ -29,6 +29,7 @@ export function App() {
   const initialTheme = loadTheme();
   const [project, setProject] = useState<Project>(() => loadProject() || newStarterProject());
   const [theme, setTheme] = useState<'light' | 'dark'>(project.theme || initialTheme);
+  // keep state to satisfy any hidden UI references
   const [errorOverlay, setErrorOverlay] = useState<string | null>(null);
   const [topHeight, setTopHeight] = useState<number>(() => loadTopSplit() ?? project.topPanelHeight ?? 0.55);
   const dragging = useRef(false);
@@ -82,15 +83,12 @@ useEffect(() => {
 }, [debouncedHtml, activeFile?.id, activeFile?.content]);
 
 
-  // Receive only error messages from preview
+  // Ignore preview error messages (no popup)
   useEffect(() => {
     const onMsg = (e: MessageEvent) => {
       const data = e.data as any;
       if (!data || !data.__fromPreview) return;
-      if (data.type === 'error') {
-        const args = data.args as unknown[];
-        setErrorOverlay(String(args && args[0] ? args[0] : 'Fehler'));
-      }
+      // Do nothing – keep UI clean
     };
     window.addEventListener('message', onMsg);
     return () => window.removeEventListener('message', onMsg);
@@ -198,7 +196,6 @@ useEffect(() => {
 
   const newProject = (kind: 'blank' | 'starter') => {
     const p = kind === 'blank' ? newBlankProject() : newStarterProject();
-    setErrorOverlay(null);
     setProject(p);
   };
 
@@ -235,7 +232,7 @@ useEffect(() => {
   useEffect(() => {
     const iframe = iframeRef.current;
     if (!iframe) return;
-    const onLoad = () => setErrorOverlay(null);
+    const onLoad = () => {};
     iframe.addEventListener('load', onLoad);
     return () => iframe.removeEventListener('load', onLoad);
   }, []);
@@ -258,6 +255,9 @@ const closeTab = React.useCallback((id: string) => {
           <input className="visually-hidden" type="file" accept=".zip" onChange={(e) => e.target.files && importZip(e.target.files[0])} />
         </label>
         <div className="spacer" />
+        <button className="btn" onClick={() => document.dispatchEvent(new CustomEvent('format-current-editor'))}>
+          Format (Ctrl/Cmd+Shift+F)
+        </button>
         <button className="btn" onClick={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))} aria-pressed={theme==='light'}>
           Theme: {theme === 'dark' ? 'Dunkel' : 'Hell'}
         </button>
@@ -269,7 +269,7 @@ const closeTab = React.useCallback((id: string) => {
 
       <div
         className="main-split"
-        style={{ gridTemplateRows: `${topHeight * 100}% 6px ${(1 - topHeight) * 100}%` }}
+        style={{ gridTemplateRows: `${topHeight * 100}% 10px ${(1 - topHeight) * 100}%` }}
       >
         <section className="panel editors" aria-label="Editorbereich oben">
           <aside className="sidebar" aria-label="Dateibaum">
@@ -328,9 +328,9 @@ const closeTab = React.useCallback((id: string) => {
         <div className="splitter" onPointerDown={onPointerDown} role="separator" aria-orientation="horizontal" />
         <section className="panel preview-wrap" aria-label="Vorschau unten">
           <div className="preview" style={{ position: 'relative' }}>
-            <div className={"error-overlay" + (errorOverlay ? '' : ' overlay-hidden')} role="alert" aria-live="assertive">
-              <strong>Fehler</strong>
-              <div>{errorOverlay}</div>
+            <div style={{ display: 'none' }}>
+              {/* overlay removed */}
+              {/* overlay content removed */}
               <button className="btn" onClick={() => setErrorOverlay(null)} style={{ marginTop: 8 }}>Schließen</button>
             </div>
             <iframe

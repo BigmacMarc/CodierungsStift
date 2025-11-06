@@ -119,7 +119,18 @@ export function buildPreviewHtml(p: Project): string {
     .map((f) => `// ${f.name}\n${f.content}`)
     .join('\n\n');
 
-  const csp = `default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src blob: data:; font-src 'self' data:; connect-src 'none'; frame-ancestors 'none';`; // strict, local only
+  // Relaxed CSP for in-iframe preview: allow inline + HTTPS for external assets.
+  // Note: frame-ancestors is ignored in <meta>, so we omit it to avoid warnings.
+  const csp = [
+    "default-src 'none'",
+    "style-src 'unsafe-inline' https:",
+    "style-src-elem 'unsafe-inline' https:",
+    "script-src 'unsafe-inline' https:",
+    "script-src-elem 'unsafe-inline' https:",
+    "img-src data: blob: https:",
+    "font-src data: https:",
+    "connect-src https:"
+  ].join('; ') + ';';
   const consoleBridge = `(() => {\n  const send = (type, args) => parent.postMessage({ __fromPreview: true, type, args }, '*');\n  // Only forward errors to parent; no console mirroring\n  window.addEventListener('error', (e) => { send('error', [String(e.message || e.error || 'Error'), (e.error && e.error.stack) || '']); });\n  window.addEventListener('unhandledrejection', (e) => { send('error', ['Unhandled: ' + String(e.reason || 'Promise rejection')]); });\n})();`;
 
   const entryContent = entry?.content || '<div></div>';
